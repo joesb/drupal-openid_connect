@@ -8,8 +8,9 @@
 /**
  * Form builder: Log in with an external account.
  */
-function openid_connect_login_form($form, &$form_state) {
-  form_load_include($form_state, 'inc', 'openid_connect', 'includes/openid_connect.forms');
+function openid_connect_login_form() {
+  $form = array();
+  include_once './' . drupal_get_path('module', 'openid_connect') . '/includes/openid_connect.forms.inc';
 
   foreach (openid_connect_get_plugins(TRUE) as $client) {
     $form['openid_connect_client_' . $client['name'] . '_login'] = array(
@@ -25,10 +26,19 @@ function openid_connect_login_form($form, &$form_state) {
 /**
  * Form submit handler: Log in with an OpenID Connect login provider.
  */
-function openid_connect_login_form_submit(&$form, &$form_state) {
+function openid_connect_login_form_submit($form_id, $form_values) {
   openid_connect_save_destination();
-
-  $client_name = $form_state['triggering_element']['#name'];
+  // N.B. This is ugly, but not sure if there's a better way.
+  $client_name = '';
+  foreach ($form_values as $key => $value) {
+    if (strpos($key, 'openid_connect_client_') === 0) {
+      continue;
+    }
+    if ($key == 'form_id') {
+      continue;
+    }
+    $client_name = $key;
+  }
   $client = openid_connect_get_client($client_name);
   $scopes = openid_connect_get_scopes();
   $_SESSION['openid_connect_op'] = 'login';
@@ -38,10 +48,13 @@ function openid_connect_login_form_submit(&$form, &$form_state) {
 /**
  * Form builder: Connect an external account to your existing Drupal account.
  */
-function openid_connect_connect_form($form, &$form_state, $account) {
-  form_load_include($form_state, 'inc', 'openid_connect', 'includes/openid_connect.forms');
+function openid_connect_connect_form() {
+  include_once realpath('.') . '/' . drupal_get_path('module', 'openid_connect') . '/includes/openid_connect.forms.inc';
 
-  $form_state['account'] = $account;
+  $form['#tree'] = TRUE;
+
+  $account = user_load(array('uid' => arg(1)));
+  $GLOBALS['form_state']['account'] = $account;
 
   $clients = openid_connect_get_plugins(TRUE);
 
@@ -53,12 +66,11 @@ function openid_connect_connect_form($form, &$form_state, $account) {
   );
 
   if (empty($clients)) {
-    $form['help']['#markup'] = t('No external account providers are available.');
-
+    $form['help']['#value'] = t('No external account providers are available.');
     return $form;
   }
   elseif ($GLOBALS['user']->uid == $account->uid) {
-    $form['help']['#markup'] = t('You can connect your account with these external providers.');
+    $form['help']['#value'] = t('You can connect your account with these external providers.');
   }
 
   $connected_accounts = openid_connect_get_connected_accounts($account);
@@ -73,12 +85,13 @@ function openid_connect_connect_form($form, &$form_state, $account) {
     $fieldset['status'] = array(
       '#type' => 'item',
       '#title' => t('Status'),
-      '#markup' => t('Not connected'),
+      '#value' => t('Not connected'),
     );
     if ($connected) {
-      $fieldset['status']['#markup'] = t('Connected as %sub', array(
-        '%sub' => $connected_accounts[$client['name']],
-      ));
+      $fieldset['status']['#value'] = t('Connected as %sub',
+                                      array(
+                                        '%sub' => $connected_accounts[$client['name']],
+                                      ));
       $fieldset['openid_connect_client_' . $client['name'] . '_disconnect'] = array(
         '#type' => 'submit',
         '#value' => t('Disconnect from !client_title', array('!client_title' => $client['title'])),
@@ -87,7 +100,6 @@ function openid_connect_connect_form($form, &$form_state, $account) {
       );
     }
     else {
-      $fieldset['status']['#markup'] = t('Not connected');
       $fieldset['openid_connect_client_' . $client['name'] . '_connect'] = array(
         '#type' => 'submit',
         '#value' => t('Connect with !client_title', array('!client_title' => $client['title'])),
@@ -105,9 +117,10 @@ function openid_connect_connect_form($form, &$form_state, $account) {
  *
  * Connect the current user's Drupal account to an external provider.
  */
-function openid_connect_connect_form_submit(&$form, &$form_state) {
-  list($op, $client_name) = explode('__', $form_state['triggering_element']['#name'], 2);
+function openid_connect_connect_form_submit(&$form, $form_values) {
 
+  list($op, $client_name) = explode('__', array_shift(array_keys($form_values)), 2);
+  $form_state = $GLOBALS['form_state'];
   if ($op === 'disconnect') {
     openid_connect_disconnect_account($form_state['account'], $client_name);
     $client = openid_connect_get_client($client_name);

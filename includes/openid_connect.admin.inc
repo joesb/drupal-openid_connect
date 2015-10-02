@@ -1,14 +1,9 @@
 <?php
 
 /**
- * @file
- * Administrative UI and functions for the OpenID Connect module.
- */
-
-/**
  * Form builder: Main administrative form.
  */
-function openid_connect_admin_form($form, &$form_state) {
+function openid_connect_admin_form() {
   $client_plugins = openid_connect_get_plugins();
   $options = array();
   foreach ($client_plugins as $client_plugin) {
@@ -24,18 +19,16 @@ function openid_connect_admin_form($form, &$form_state) {
     '#default_value' => variable_get('openid_connect_clients_enabled', array()),
   );
   foreach ($client_plugins as $client_plugin) {
+
     $client = openid_connect_get_client($client_plugin['name']);
 
-    $element = 'openid_connect_clients_enabled[' . $client_plugin['name'] . ']';
     $form['clients'][$client_plugin['name']] = array(
       '#title' => $client_plugin['title'],
       '#type' => 'fieldset',
-      '#states' => array(
-        'visible' => array(
-          ':input[name="' . $element . '"]' => array('checked' => TRUE),
-        ),
-      ),
+      '#collapsed' => !in_array($client_plugin['name'], variable_get('openid_connect_clients_enabled', array())),
+      '#collapsible' => TRUE,
     );
+
     $form['clients'][$client_plugin['name']] += $client->settingsForm();
   }
 
@@ -46,7 +39,7 @@ function openid_connect_admin_form($form, &$form_state) {
     '#default_value' => variable_get('openid_connect_always_save_userinfo', TRUE),
   );
 
-  if (variable_get('user_pictures')) {
+  if (variable_get('user_pictures', FALSE)) {
     $form['openid_connect_user_pictures'] = array(
       '#title' => t('Fetch user profile picture from login provider'),
       '#description' => t('Whether the user profile picture from the login provider should be fetched and saved locally.'),
@@ -60,10 +53,9 @@ function openid_connect_admin_form($form, &$form_state) {
     '#type' => 'fieldset',
   );
 
-  $user_entity_wrapper = entity_metadata_wrapper('user');
   $claims = openid_connect_claims_options();
-  $properties = $user_entity_wrapper->getPropertyInfo();
   $properties_skip = _openid_connect_user_properties_to_skip();
+  $properties = openid_connect_properties();
   foreach ($properties as $property_name => $property) {
     if (isset($properties_skip[$property_name])) {
       continue;
@@ -74,19 +66,18 @@ function openid_connect_admin_form($form, &$form_state) {
       $default_value = 'zoneinfo';
     }
 
-    $form['userinfo_mapping']['openid_connect_userinfo_mapping_property_' . $property_name] = array(
+    $form['userinfo_mapping']['openid_connect_mapping_property_' . $property_name] = array(
       '#type' => 'select',
       '#title' => $property['label'],
       '#description' => $property['description'],
       '#options' => $claims,
       '#empty_value' => 0,
       '#empty_option' => t('- No mapping -'),
-      '#default_value' => variable_get('openid_connect_userinfo_mapping_property_' . $property_name, $default_value),
+      '#default_value' => variable_get('openid_connect_mapping_property_' . $property_name, $default_value),
     );
   }
 
-  $form['actions']['#type'] = 'actions';
-  $form['actions']['submit'] = array(
+  $form['options']['submit'] = array(
     '#type' => 'submit',
     '#value' => t('Save configuration'),
   );
@@ -98,12 +89,13 @@ function openid_connect_admin_form($form, &$form_state) {
  * Validation handler for openid_connect_admin_form.
  */
 function openid_connect_admin_form_validate($form, &$form_state) {
-  $enabled_clients = $form_state['values']['openid_connect_clients_enabled'];
+  $enabled_clients = $form_state['openid_connect_clients_enabled'];
+
   $enabled_clients = array_filter($enabled_clients);
   foreach ($enabled_clients as $client_name) {
     // Give the client a chance to validate the submitted values.
     $client = openid_connect_get_client($client_name);
-    $fake_form = $form['clients'][$client_name];
+    $fake_form = $form_state['clients'][$client_name];
     $fake_form_state = array('values' => $form_state['values']['clients'][$client_name]);
     $error_element_base = 'clients][' . $client_name . '][';
     $client->settingsFormValidate($fake_form, $fake_form_state, $error_element_base);
@@ -114,15 +106,15 @@ function openid_connect_admin_form_validate($form, &$form_state) {
  * Submit handler for openid_connect_admin_form.
  */
 function openid_connect_admin_form_submit($form, &$form_state) {
-  $enabled_clients = $form_state['values']['openid_connect_clients_enabled'];
+  $enabled_clients = $form_state['openid_connect_clients_enabled'];
   $enabled_clients = array_filter($enabled_clients);
   variable_set('openid_connect_clients_enabled', $enabled_clients);
 
   foreach ($enabled_clients as $client_name) {
     // Give the client a chance to modify the submitted values.
     $client = openid_connect_get_client($client_name);
-    $fake_form = $form['clients'][$client_name];
-    $fake_form_state = array('values' => $form_state['values']['clients'][$client_name]);
+    $fake_form = $form_state['clients'][$client_name];
+    $fake_form_state = array('values' => $form_state['clients'][$client_name]);
     $client->settingsFormSubmit($fake_form, $fake_form_state);
 
     // Save the settings.
@@ -130,7 +122,7 @@ function openid_connect_admin_form_submit($form, &$form_state) {
   }
 
   $claims = array();
-  foreach ($form_state['values']['userinfo_mapping'] as $variable => $claim) {
+  foreach ($form_state['userinfo_mapping'] as $variable => $claim) {
     if (!empty($claim)) {
       $claims[] = $claim;
       variable_set($variable, $claim);
@@ -151,8 +143,8 @@ function openid_connect_admin_form_submit($form, &$form_state) {
     'openid_connect_user_pictures',
   );
   foreach ($default_enabled as $variable) {
-    if (isset($form_state['values'][$variable]) && empty($form_state['values'][$variable])) {
-      variable_set($variable, $form_state['values'][$variable]);
+    if (isset($form_state[$variable]) && empty($form_state[$variable])) {
+      variable_set($variable, $form_state[$variable]);
     }
   }
 }

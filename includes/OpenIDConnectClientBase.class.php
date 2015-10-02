@@ -99,18 +99,18 @@ abstract class OpenIDConnectClientBase implements OpenIDConnectClientInterface {
   public function authorize($scope = 'openid email') {
     $redirect_uri = OPENID_CONNECT_REDIRECT_PATH_BASE . '/' . $this->name;
     $url_options = array(
-      'query' => array(
-        'client_id' => $this->getSetting('client_id'),
-        'response_type' => 'code',
-        'scope' => $scope,
-        'redirect_uri' => url($redirect_uri, array('absolute' => TRUE)),
-        'state' => openid_connect_create_state_token(),
-      ),
+      'client_id' => $this->getSetting('client_id'),
+      'response_type' => 'code',
+      'scope' => $scope,
+      'redirect_uri' => url($redirect_uri, NULL, NULL, TRUE),
+      'state' => openid_connect_create_state_token(),
     );
+
     $endpoints = $this->getEndpoints();
     // Clear $_GET['destination'] because we need to override it.
     unset($_GET['destination']);
-    drupal_goto($endpoints['authorization'], $url_options);
+    $query = drupal_query_string_encode($url_options);
+    drupal_goto($endpoints['authorization'], $query);
   }
 
   /**
@@ -123,19 +123,22 @@ abstract class OpenIDConnectClientBase implements OpenIDConnectClientInterface {
       'code' => $authorization_code,
       'client_id' => $this->getSetting('client_id'),
       'client_secret' => $this->getSetting('client_secret'),
-      'redirect_uri' => url($redirect_uri, array('absolute' => TRUE)),
+      'redirect_uri' => url($redirect_uri, NULL, NULL, TRUE),
       'grant_type' => 'authorization_code',
     );
     $request_options = array(
       'method' => 'POST',
-      'data' => drupal_http_build_query($post_data),
+      'data' => drupal_query_string_encode($post_data),
       'timeout' => 15,
       'headers' => array('Content-Type' => 'application/x-www-form-urlencoded'),
     );
     $endpoints = $this->getEndpoints();
-    $response = drupal_http_request($endpoints['token'], $request_options);
+    $response = drupal_http_request($endpoints['token'],
+                $request_options['headers'],
+                $request_options['method'],
+                $request_options['data']);
     if (!isset($response->error) && $response->code == 200) {
-      $response_data = drupal_json_decode($response->data);
+      $response_data = json_decode($response->data, TRUE);
       return array(
         'id_token' => $response_data['id_token'],
         'access_token' => $response_data['access_token'],
@@ -155,7 +158,7 @@ abstract class OpenIDConnectClientBase implements OpenIDConnectClientInterface {
     list($headerb64, $claims64, $signatureb64) = explode('.', $id_token);
     $claims64 = str_replace(array('-', '_'), array('+', '/'), $claims64);
     $claims64 = base64_decode($claims64);
-    return drupal_json_decode($claims64);
+    return json_decode($claims64, TRUE);
   }
 
   /**
@@ -168,9 +171,9 @@ abstract class OpenIDConnectClientBase implements OpenIDConnectClientInterface {
       ),
     );
     $endpoints = $this->getEndpoints();
-    $response = drupal_http_request($endpoints['userinfo'], $request_options);
+    $response = drupal_http_request($endpoints['userinfo'], $request_options['headers']);
     if (!isset($response->error) && $response->code == 200) {
-      return drupal_json_decode($response->data);
+      return json_decode($response->data, TRUE);
     }
     else {
       openid_connect_log_request_error(__FUNCTION__, $this->name, $response);

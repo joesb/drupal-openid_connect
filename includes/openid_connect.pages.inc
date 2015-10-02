@@ -48,7 +48,7 @@ function openid_connect_redirect_page($client_name) {
         '@error' => $_GET['error'],
         '@details' => $_GET['error_description'],
       );
-      watchdog('openid_connect_' . $client_name, 'Authorization failed: @error. Details: @details', $variables, WATCHDOG_ERROR);
+      watchdog('openid_connect_' . $client_name, t('Authorization failed: @error. Details: @details', $variables), WATCHDOG_ERROR);
     }
   }
   else {
@@ -75,7 +75,10 @@ function openid_connect_redirect_page($client_name) {
 
   // It's possible to set 'options' in the redirect destination.
   if (is_array($destination)) {
-    drupal_goto($destination[0], $destination[1]);
+    if (isset($destination[1]['query']) && !empty($destination[1]['query'])) {
+      drupal_goto($destination[0], $destination[1]['query']);
+    }
+    drupal_goto($destination[0]);
   }
   else {
     drupal_goto($destination);
