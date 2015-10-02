@@ -8,8 +8,9 @@
 /**
  * Form builder: Log in with an external account.
  */
-function openid_connect_login_form($form, &$form_state) {
-  form_load_include($form_state, 'inc', 'openid_connect', 'includes/openid_connect.forms');
+function openid_connect_login_form(&$form_state) {
+  $form = array();
+  module_load_include('inc', 'openid_connect', 'includes/openid_connect.forms');
 
   foreach (openid_connect_get_plugins(TRUE) as $client) {
     $form['openid_connect_client_' . $client['name'] . '_login'] = array(
@@ -25,10 +26,10 @@ function openid_connect_login_form($form, &$form_state) {
 /**
  * Form submit handler: Log in with an OpenID Connect login provider.
  */
-function openid_connect_login_form_submit(&$form, &$form_state) {
+function openid_connect_login_form_submit($form, &$form_state) {
   openid_connect_save_destination();
 
-  $client_name = $form_state['triggering_element']['#name'];
+  $client_name = $form_state['clicked_button']['#name'];
   $client = openid_connect_get_client($client_name);
   $scopes = openid_connect_get_scopes();
   $_SESSION['openid_connect_op'] = 'login';
@@ -38,8 +39,8 @@ function openid_connect_login_form_submit(&$form, &$form_state) {
 /**
  * Form builder: Connect an external account to your existing Drupal account.
  */
-function openid_connect_connect_form($form, &$form_state, $account) {
-  form_load_include($form_state, 'inc', 'openid_connect', 'includes/openid_connect.forms');
+function openid_connect_connect_form(&$form_state, $account) {
+  module_load_include('inc', 'openid_connect', 'includes/openid_connect.forms');
 
   $form_state['account'] = $account;
 
@@ -105,8 +106,8 @@ function openid_connect_connect_form($form, &$form_state, $account) {
  *
  * Connect the current user's Drupal account to an external provider.
  */
-function openid_connect_connect_form_submit(&$form, &$form_state) {
-  list($op, $client_name) = explode('__', $form_state['triggering_element']['#name'], 2);
+function openid_connect_connect_form_submit($form, &$form_state) {
+  list($op, $client_name) = explode('__', $form_state['clicked_button']['#name'], 2);
 
   if ($op === 'disconnect') {
     openid_connect_disconnect_account($form_state['account'], $client_name);

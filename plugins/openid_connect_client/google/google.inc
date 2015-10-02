@@ -8,4 +8,6 @@
 $plugin = array(
   'title' => t('Google'),
   'class' => 'OpenIDConnectClientGoogle',
+  'path' => __DIR__,
+  'file' => 'OpenIDConnectClientGoogle.class.php',
 );

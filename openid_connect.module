@@ -5,6 +5,11 @@
  * A pluggable client implementation for the OpenID Connect protocol.
  */
 
+include_once __DIR__ . '/includes/OpenIDConnectClientInterface.class.php';
+include_once __DIR__ . '/includes/OpenIDConnectClientBase.class.php';
+include_once __DIR__ . '/plugins/openid_connect_client/generic/OpenIDConnectClientGeneric.class.php';
+include_once __DIR__ . '/plugins/openid_connect_client/google/OpenIDConnectClientGoogle.class.php';
+
 /**
  * Base path where to login providers can redirect in the OAuth2 flow.
  */
@@ -15,7 +20,7 @@ define('OPENID_CONNECT_REDIRECT_PATH_BASE', 'openid-connect');
  */
 function openid_connect_menu() {
   $items = array();
-  $items['admin/config/services/openid-connect'] = array(
+  $items['admin/settings/openid-connect'] = array(
     'title' => 'OpenID Connect',
     'description' => 'Config OpenID Connect, choose active OpenID Connect clients etc.',
     'page callback' => 'drupal_get_form',
@@ -143,28 +148,33 @@ function openid_connect_get_plugins($enabled_only = FALSE) {
 }
 
 /**
- * Implements hook_block_info().
+ * Implements hook_block().
  */
-function openid_connect_block_info() {
-  return array(
-    'openid_connect_login' => array(
+function openid_connect_block($op = 'list', $delta = 0, $edit = array()) {
+  if ($op == 'list') {
+    $blocks[0] = array(
       'info' => t('OpenID Connect login'),
-      'cache' => DRUPAL_CACHE_PER_ROLE | DRUPAL_CACHE_PER_PAGE,
-    ),
-  );
-}
-
-/**
- * Implements hook_block_view().
- */
-function openid_connect_block_view($delta = '') {
-  if ($delta == 'openid_connect_login' && user_is_anonymous()) {
-    module_load_include('inc', 'openid_connect', 'includes/openid_connect.forms');
-
-    return array(
-      'subject' => t('Log in'),
-      'content' => drupal_get_form('openid_connect_login_form'),
+      'weight' => 0,
+      'status' => 0,
+      'region' => 'left',
+      'cache' => BLOCK_CACHE_PER_ROLE | BLOCK_CACHE_PER_PAGE,
     );
+    return $blocks;
+  }
+  else if ($op == 'view') {
+    switch ($delta) {
+      case 0:
+        if (user_is_anonymous()) {
+          module_load_include('inc', 'openid_connect', 'includes/openid_connect.forms');
+
+          $block = array(
+            'subject' => t('Log in'),
+            'content' => drupal_get_form('openid_connect_login_form'),
+          );
+          return $block;
+        }
+        break;
+    }
   }
 }
 
@@ -220,8 +230,7 @@ function openid_connect_connected_accounts_access($account) {
  * Saves user profile information into a user account.
  */
 function openid_connect_save_userinfo($account, $userinfo) {
-  $account_wrapper = entity_metadata_wrapper('user', $account);
-  $properties = $account_wrapper->getPropertyInfo();
+  $properties = openid_connect_properties();
   $properties_skip = _openid_connect_user_properties_to_skip();
   foreach ($properties as $property_name => $property) {
     if (isset($properties_skip[$property_name])) {
@@ -229,20 +238,23 @@ function openid_connect_save_userinfo($account, $userinfo) {
     }
     $claim = variable_get('openid_connect_userinfo_mapping_property_' . $property_name, NULL);
     if ($claim && isset($userinfo[$claim])) {
-      $account_wrapper->{$property_name} = $userinfo[$claim];
+      $account->{$property_name} = $userinfo[$claim];
     }
   }
 
   // Save the display name additionally in the user account 'data', for use in
   // openid_connect_username_alter().
   if (isset($userinfo['name'])) {
+    if (!is_array($account->data)) {
+      $account->data = array();
+    }
     $account->data['oidc_name'] = $userinfo['name'];
   }
 
-  $account_wrapper->save();
+  user_save($account);
 
   // Fetch and save user picture from the login provider.
-  if (variable_get('user_pictures') && variable_get('openid_connect_user_pictures', TRUE) && !empty($userinfo['picture'])) {
+  if (variable_get('user_pictures', FALSE) && variable_get('openid_connect_user_pictures', TRUE) && !empty($userinfo['picture'])) {
     openid_connect_save_user_picture($account, $userinfo['picture']);
   }
 }
@@ -302,36 +314,15 @@ function openid_connect_save_user_picture($account, $picture_url) {
  *   The path to redirect to after login.
  */
 function openid_connect_login_user($account, &$destination) {
-  $form_state['uid'] = $account->uid;
-  $form = array();
-
-  // TFA integration.
-  if (module_exists('tfa')) {
-    // The 'code' and 'state' parameters have now been used.
-    unset($_GET['code'], $_GET['state']);
-
-    // TFA will preserve the initial redirect if it is set in the $form_state.
-    $form_state['redirect'] = $destination;
-
-    tfa_login_submit($form, $form_state);
-    tfa_login_form_redirect($form, $form_state);
-
-    // TFA may want to change the redirect destination.
-    if (isset($form_state['redirect']) && $form_state['redirect'] != 'user/' . $form_state['uid']) {
-      $destination = $form_state['redirect'];
-    }
-  }
-  else {
-    user_login_submit($form, $form_state);
-  }
+  user_external_login($account, array('destination' => $destination));
 }
 
 /**
  * Save the current path in the session, for redirecting after authorization.
  */
 function openid_connect_save_destination() {
-  $destination = drupal_get_destination();
-  $destination = $destination['destination'] == 'user/login' ? 'user' : $destination['destination'];
+  $destination = substr(drupal_get_destination(), 12);
+  $destination = $destination == 'user/login' ? 'user' : $destination;
 
   // The destination could contain query parameters. Ensure that they are
   // preserved.
@@ -589,7 +580,7 @@ function openid_connect_claims() {
  * Returns OpenID Connect standard Claims as a Form API options array.
  */
 function openid_connect_claims_options() {
-  $options = array();
+  $options = array('' => t('- No mapping -'));
   foreach (openid_connect_claims() as $claim_name => $claim) {
     $options[$claim['scope']][$claim_name] = $claim_name;
   }
@@ -645,7 +636,7 @@ function openid_connect_log_request_error($method, $client_name, $response) {
   // Some error responses don't have a data key set.
   $details = '';
   if (!empty($response->data)) {
-    $details = print_r(drupal_json_decode($response->data), TRUE);
+    $details = print_r(json_decode($response->data), TRUE);
   }
   $variables = array(
     '@error' => $response->error,
@@ -684,13 +675,13 @@ function openid_connect_entity_property_info_alter(&$info) {
  *   An array of 'sub' properties keyed by the client name.
  */
 function openid_connect_get_connected_accounts($account) {
-  $auth_maps = db_query(
-    "SELECT module, authname FROM {authmap} WHERE uid = :uid AND module LIKE 'openid_connect_%'",
-    array(':uid' => $account->uid)
+  $query = db_query(
+    "SELECT module, authname FROM {authmap} WHERE uid = %d AND module LIKE 'openid_connect_%'",
+    array('%d' => $account->uid)
   );
   $module_offset = strlen('openid_connect_');
   $results = array();
-  foreach ($auth_maps as $auth_map) {
+  while ($auth_map = db_fetch_object($query)) {
     $client = substr($auth_map->module, $module_offset);
     $sub = $auth_map->authname;
     $results[$client] = $sub;
@@ -879,4 +870,342 @@ function openid_connect_connect_current_user($client, $tokens) {
   module_invoke_all('openid_connect_post_authorize', $tokens, $account, $userinfo, $client->getName());
 
   return TRUE;
+}
+
+/**
+ * D7 Backport: Provides central static variable storage.
+ *
+ * All functions requiring a static variable to persist or cache data within
+ * a single page request are encouraged to use this function unless it is
+ * absolutely certain that the static variable will not need to be reset during
+ * the page request. By centralizing static variable storage through this
+ * function, other functions can rely on a consistent API for resetting any
+ * other function's static variables.
+ *
+ * Example:
+ * @code
+ * function language_list($field = 'language') {
+ *   $languages = &drupal_static(__FUNCTION__);
+ *   if (!isset($languages)) {
+ *     // If this function is being called for the first time after a reset,
+ *     // query the database and execute any other code needed to retrieve
+ *     // information about the supported languages.
+ *     ...
+ *   }
+ *   if (!isset($languages[$field])) {
+ *     // If this function is being called for the first time for a particular
+ *     // index field, then execute code needed to index the information already
+ *     // available in $languages by the desired field.
+ *     ...
+ *   }
+ *   // Subsequent invocations of this function for a particular index field
+ *   // skip the above two code blocks and quickly return the already indexed
+ *   // information.
+ *   return $languages[$field];
+ * }
+ * function locale_translate_overview_screen() {
+ *   // When building the content for the translations overview page, make
+ *   // sure to get completely fresh information about the supported languages.
+ *   drupal_static_reset('language_list');
+ *   ...
+ * }
+ * @endcode
+ *
+ * In a few cases, a function can have certainty that there is no legitimate
+ * use-case for resetting that function's static variable. This is rare,
+ * because when writing a function, it's hard to forecast all the situations in
+ * which it will be used. A guideline is that if a function's static variable
+ * does not depend on any information outside of the function that might change
+ * during a single page request, then it's ok to use the "static" keyword
+ * instead of the drupal_static() function.
+ *
+ * Example:
+ * @code
+ * function actions_do(...) {
+ *   // $stack tracks the number of recursive calls.
+ *   static $stack;
+ *   $stack++;
+ *   if ($stack > variable_get('actions_max_stack', 35)) {
+ *     ...
+ *     return;
+ *   }
+ *   ...
+ *   $stack--;
+ * }
+ * @endcode
+ *
+ * In a few cases, a function needs a resettable static variable, but the
+ * function is called many times (100+) during a single page request, so
+ * every microsecond of execution time that can be removed from the function
+ * counts. These functions can use a more cumbersome, but faster variant of
+ * calling drupal_static(). It works by storing the reference returned by
+ * drupal_static() in the calling function's own static variable, thereby
+ * removing the need to call drupal_static() for each iteration of the function.
+ * Conceptually, it replaces:
+ * @code
+ * $foo = &drupal_static(__FUNCTION__);
+ * @endcode
+ * with:
+ * @code
+ * // Unfortunately, this does not work.
+ * static $foo = &drupal_static(__FUNCTION__);
+ * @endcode
+ * However, the above line of code does not work, because PHP only allows static
+ * variables to be initializied by literal values, and does not allow static
+ * variables to be assigned to references.
+ * - http://php.net/manual/language.variables.scope.php#language.variables.scope.static
+ * - http://php.net/manual/language.variables.scope.php#language.variables.scope.references
+ * The example below shows the syntax needed to work around both limitations.
+ * For benchmarks and more information, see http://drupal.org/node/619666.
+ *
+ * Example:
+ * @code
+ * function user_access($string, $account = NULL) {
+ *   // Use the advanced drupal_static() pattern, since this is called very often.
+ *   static $drupal_static_fast;
+ *   if (!isset($drupal_static_fast)) {
+ *     $drupal_static_fast['perm'] = &drupal_static(__FUNCTION__);
+ *   }
+ *   $perm = &$drupal_static_fast['perm'];
+ *   ...
+ * }
+ * @endcode
+ *
+ * @param $name
+ *   Globally unique name for the variable. For a function with only one static,
+ *   variable, the function name (e.g. via the PHP magic __FUNCTION__ constant)
+ *   is recommended. For a function with multiple static variables add a
+ *   distinguishing suffix to the function name for each one.
+ * @param $default_value
+ *   Optional default value.
+ * @param $reset
+ *   TRUE to reset one or all variables(s). This parameter is only used
+ *   internally and should not be passed in; use drupal_static_reset() instead.
+ *   (This function's return value should not be used when TRUE is passed in.)
+ *
+ * @return
+ *   Returns a variable by reference.
+ *
+ * @see drupal_static_reset()
+ */
+if (!function_exists('drupal_static')) {
+  function &drupal_static($name, $default_value = NULL, $reset = FALSE) {
+    static $data = array(), $default = array();
+    // First check if dealing with a previously defined static variable.
+    if (isset($data[$name]) || array_key_exists($name, $data)) {
+      // Non-NULL $name and both $data[$name] and $default[$name] statics exist.
+      if ($reset) {
+        // Reset pre-existing static variable to its default value.
+        $data[$name] = $default[$name];
+      }
+      return $data[$name];
+    }
+    // Neither $data[$name] nor $default[$name] static variables exist.
+    if (isset($name)) {
+      if ($reset) {
+        // Reset was called before a default is set and yet a variable must be
+        // returned.
+        return $data;
+      }
+      // First call with new non-NULL $name. Initialize a new static variable.
+      $default[$name] = $data[$name] = $default_value;
+      return $data[$name];
+    }
+    // Reset all: ($name == NULL). This needs to be done one at a time so that
+    // references returned by earlier invocations of drupal_static() also get
+    // reset.
+    foreach ($default as $name => $value) {
+      $data[$name] = $value;
+    }
+    // As the function returns a reference, the return should always be a
+    // variable.
+    return $data;
+  }
+}
+
+/**
+ * D7 Backport: Resets one or all centrally stored static variable(s).
+ *
+ * @param $name
+ *   Name of the static variable to reset. Omit to reset all variables.
+ *   Resetting all variables should only be used, for example, for running unit
+ *   tests with a clean environment.
+ */
+if (!function_exists('drupal_static_reset')) {
+  function drupal_static_reset($name = NULL) {
+    drupal_static($name, NULL, TRUE);
+  }
+}
+
+/**
+ * D7 Backport: Parses a URL string into its path, query, and fragment components.
+ *
+ * This function splits both internal paths like @code node?b=c#d @endcode and
+ * external URLs like @code https://example.com/a?b=c#d @endcode into their
+ * component parts. See
+ * @link http://tools.ietf.org/html/rfc3986#section-3 RFC 3986 @endlink for an
+ * explanation of what the component parts are.
+ *
+ * Note that, unlike the RFC, when passed an external URL, this function
+ * groups the scheme, authority, and path together into the path component.
+ *
+ * @param string $url
+ *   The internal path or external URL string to parse.
+ *
+ * @return array
+ *   An associative array containing:
+ *   - path: The path component of $url. If $url is an external URL, this
+ *     includes the scheme, authority, and path.
+ *   - query: An array of query parameters from $url, if they exist.
+ *   - fragment: The fragment component from $url, if it exists.
+ *
+ * @see drupal_goto()
+ * @see l()
+ * @see url()
+ * @see http://tools.ietf.org/html/rfc3986
+ *
+ * @ingroup php_wrappers
+ */
+ if (!function_exists('drupal_parse_url')) {
+  function drupal_parse_url($url) {
+    $options = array(
+      'path' => NULL,
+      'query' => array(),
+      'fragment' => '',
+    );
+
+    // External URLs: not using parse_url() here, so we do not have to rebuild
+    // the scheme, host, and path without having any use for it.
+    if (strpos($url, '://') !== FALSE) {
+      // Split off everything before the query string into 'path'.
+      $parts = explode('?', $url);
+      $options['path'] = $parts[0];
+      // If there is a query string, transform it into keyed query parameters.
+      if (isset($parts[1])) {
+        $query_parts = explode('#', $parts[1]);
+        parse_str($query_parts[0], $options['query']);
+        // Take over the fragment, if there is any.
+        if (isset($query_parts[1])) {
+          $options['fragment'] = $query_parts[1];
+        }
+      }
+    }
+    // Internal URLs.
+    else {
+      // parse_url() does not support relative URLs, so make it absolute. E.g. the
+      // relative URL "foo/bar:1" isn't properly parsed.
+      $parts = parse_url('http://example.com/' . $url);
+      // Strip the leading slash that was just added.
+      $options['path'] = substr($parts['path'], 1);
+      if (isset($parts['query'])) {
+        parse_str($parts['query'], $options['query']);
+      }
+      if (isset($parts['fragment'])) {
+        $options['fragment'] = $parts['fragment'];
+      }
+    }
+    // The 'q' parameter contains the path of the current page if clean URLs are
+    // disabled. It overrides the 'path' of the URL when present, even if clean
+    // URLs are enabled, due to how Apache rewriting rules work.
+    if (isset($options['query']['q'])) {
+      $options['path'] = $options['query']['q'];
+      unset($options['query']['q']);
+    }
+
+    return $options;
+  }
+}
+
+/**
+ * D7 Backport: Parses an array into a valid, rawurlencoded query string.
+ *
+ * This differs from http_build_query() as we need to rawurlencode() (instead of
+ * urlencode()) all query parameters.
+ *
+ * @param $query
+ *   The query parameter array to be processed, e.g. $_GET.
+ * @param $parent
+ *   Internal use only. Used to build the $query array key for nested items.
+ *
+ * @return
+ *   A rawurlencoded string which can be used as or appended to the URL query
+ *   string.
+ *
+ * @see drupal_get_query_parameters()
+ * @ingroup php_wrappers
+ */
+if (!function_exists('drupal_http_build_query')) {
+  function drupal_http_build_query(array $query, $parent = '') {
+    $params = array();
+
+    foreach ($query as $key => $value) {
+      $key = ($parent ? $parent . '[' . rawurlencode($key) . ']' : rawurlencode($key));
+
+      // Recurse into children.
+      if (is_array($value)) {
+        $params[] = drupal_http_build_query($value, $key);
+      }
+      // If a query parameter value is NULL, only append its key.
+      elseif (!isset($value)) {
+        $params[] = $key;
+      }
+      else {
+        // For better readability of paths in query strings, we decode slashes.
+        $params[] = $key . '=' . str_replace('%2F', '/', rawurlencode($value));
+      }
+    }
+
+    return implode('&', $params);
+  }
+}
+
+/**
+ * A list of properties
+ *
+ * @return array
+ *   A list of properties
+ */
+function openid_connect_properties() {
+  return array(
+    'uid' => array(
+      'label' => t('User ID'),
+      'description' => t('The unique ID of the user account.'),
+    ),
+    'name' => array(
+      'label' => t('Name'),
+      'description' => t('The login name of the user account.'),
+    ),
+    'mail' => array(
+      'label' => t('Email'),
+      'description' => t('The email address of the user account.'),
+    ),
+    'access' => array(
+      'label' => t('Last access'),
+      'description' => t('The date the user last accessed the site.'),
+    ),
+    'login' => array(
+      'label' => t('Last login'),
+      'description' => t('The date the user last logged in to the site.'),
+    ),
+    'created' => array(
+      'label' => t('Created'),
+      'description' => t('The date the user account was created.'),
+    ),
+    'roles' => array(
+      'label' => t('User roles'),
+      'description' => t('The roles of the user.'),
+    ),
+    'status' => array(
+      'label' => t('Status'),
+      'description' => t('Whether the user is active or blocked.'),
+    ),
+    'theme' => array(
+      'label' => t('Default theme'),
+      'description' => t("The user's default theme."),
+    ),
+    'timezone' => array(
+      'label' => t('Time zone'),
+      'description' => t("The user's time zone."),
+    ),
+  );
 }

@@ -11,4 +11,6 @@
 $plugin = array(
   'title' => t('Generic'),
   'class' => 'OpenIDConnectClientGeneric',
+  'path' => __DIR__,
+  'file' => 'OpenIDConnectClientGeneric.class.php',
 );

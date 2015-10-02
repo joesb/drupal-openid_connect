@@ -8,7 +8,7 @@
 /**
  * Form builder: Main administrative form.
  */
-function openid_connect_admin_form($form, &$form_state) {
+function openid_connect_admin_form(&$form_state) {
   $client_plugins = openid_connect_get_plugins();
   $options = array();
   foreach ($client_plugins as $client_plugin) {
@@ -46,7 +46,7 @@ function openid_connect_admin_form($form, &$form_state) {
     '#default_value' => variable_get('openid_connect_always_save_userinfo', TRUE),
   );
 
-  if (variable_get('user_pictures')) {
+  if (variable_get('user_pictures', FALSE)) {
     $form['openid_connect_user_pictures'] = array(
       '#title' => t('Fetch user profile picture from login provider'),
       '#description' => t('Whether the user profile picture from the login provider should be fetched and saved locally.'),
@@ -60,9 +60,8 @@ function openid_connect_admin_form($form, &$form_state) {
     '#type' => 'fieldset',
   );
 
-  $user_entity_wrapper = entity_metadata_wrapper('user');
   $claims = openid_connect_claims_options();
-  $properties = $user_entity_wrapper->getPropertyInfo();
+  $properties = openid_connect_properties();
   $properties_skip = _openid_connect_user_properties_to_skip();
   foreach ($properties as $property_name => $property) {
     if (isset($properties_skip[$property_name])) {
@@ -85,8 +84,7 @@ function openid_connect_admin_form($form, &$form_state) {
     );
   }
 
-  $form['actions']['#type'] = 'actions';
-  $form['actions']['submit'] = array(
+  $form['submit'] = array(
     '#type' => 'submit',
     '#value' => t('Save configuration'),
   );
