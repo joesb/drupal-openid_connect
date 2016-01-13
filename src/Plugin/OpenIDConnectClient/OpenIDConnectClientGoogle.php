@@ -56,15 +56,37 @@ class OpenIDConnectClientGoogle extends OpenIDConnectClientBase {
    * Overrides OpenIDConnectClientBase::retrieveUserInfo().
    */
   public function retrieveUserInfo($access_token) {
-    $userinfo = parent::retrieveUserInfo($access_token);
-    if ($userinfo) {
-      // For some reason Google returns the URI of the profile picture in a
-      // weird format: "https:" appears twice in the beginning of the URI.
-      // Using a regular expression matching for fixing it guarantees that
-      // things won't break if Google changes the way the URI is returned.
-      preg_match('/https:\/\/*.*/', $userinfo['picture'], $matches);
-      $userinfo['picture'] = $matches[0];
+    $request_options = array(
+      'headers' => array(
+        'Authorization' => 'Bearer ' . $access_token,
+      ),
+    );
+    $endpoints = $this->getEndpoints();
+
+    $client = $this->httpClient;
+    try {
+      // The user info is a get not a post request for Google
+      $response = $client->get($endpoints['userinfo'], $request_options);
+      $response_data = (string) $response->getBody();
+
+      $userinfo = json_decode($response_data, TRUE);
     }
+    catch (Exception $e) {
+      $variables = array(
+        '@message' => 'Could not retrieve user profile information',
+        '@error_message' => $e->getMessage(),
+      );
+      $this->loggerFactory->get('openid_connect_' . $this->pluginId)
+        ->error('@message. Details: @error_message', $variables);
+      return FALSE;
+    }
+
+    // For some reason Google returns the URI of the profile picture in a
+    // weird format: "https:" appears twice in the beginning of the URI.
+    // Using a regular expression matching for fixing it guarantees that
+    // things won't break if Google changes the way the URI is returned.
+    preg_match('/https:\/\/*.*/', $userinfo['picture'], $matches);
+    $userinfo['picture'] = $matches[0];
 
     return $userinfo;
   }
