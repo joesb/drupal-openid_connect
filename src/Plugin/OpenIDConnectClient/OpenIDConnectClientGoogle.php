@@ -22,6 +22,22 @@ use Drupal\openid_connect\Plugin\OpenIDConnectClientBase;
 class OpenIDConnectClientGoogle extends OpenIDConnectClientBase {
 
   /**
+   * Overrides OpenIDConnectClientBase::settingsForm().
+   */
+  public function buildConfigurationForm(array $form, FormStateInterface $form_state) {
+    $form = parent::buildConfigurationForm($form, $form_state);
+
+    $form['hd'] = array(
+      '#title' => t('Hosted domain'),
+      '#type' => 'textfield',
+      '#description' => t('Limit sign-ins to the hosted domain name for the user\'s Google Apps account. For instance, example.com.'),
+      '#default_value' => $this->configuration['hd'],
+    );
+
+    return $form;
+  }
+
+  /**
    * Overrides OpenIDConnectClientBase::getEndpoints().
    */
   public function getEndpoints() {
