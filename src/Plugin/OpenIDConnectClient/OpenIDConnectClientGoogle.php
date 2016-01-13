@@ -7,7 +7,11 @@
 
 namespace Drupal\openid_connect\Plugin\OpenIDConnectClient;
 
+use Drupal\Core\Form\FormStateInterface;
 use Drupal\openid_connect\Plugin\OpenIDConnectClientBase;
+use Drupal\Core\Routing\TrustedRedirectResponse;
+use Drupal\Core\Url;
+use Drupal\openid_connect\StateToken;
 
 /**
  * OpenID Connect client for Google.
@@ -63,6 +67,35 @@ class OpenIDConnectClientGoogle extends OpenIDConnectClientBase {
     }
 
     return $userinfo;
+  }
+
+  /**
+   * Overrides OpenIDConnectClientBase::authorize().
+   */
+  public function authorize($scope = 'openid email') {
+    $redirect_uri = Url::fromRoute(
+      'openid_connect.redirect_controller_redirect',
+      array('client_name' => $this->pluginId), array('absolute' => TRUE)
+    )->toString();
+
+    $url_options = array(
+      'query' => array(
+        'client_id' => $this->configuration['client_id'],
+        'response_type' => 'code',
+        'scope' => $scope,
+        'redirect_uri' => $redirect_uri,
+        'state' => StateToken::create(),
+        'hd' => $this->configuration['hd'],
+      ),
+    );
+
+    $endpoints = $this->getEndpoints();
+    // Clear _GET['destination'] because we need to override it.
+    $this->requestStack->getCurrentRequest()->query->remove('destination');
+    $authorization_endpoint = Url::fromUri($endpoints['authorization'], $url_options)->toString();
+
+    $response = new TrustedRedirectResponse($authorization_endpoint);
+    return $response;
   }
 
 }
